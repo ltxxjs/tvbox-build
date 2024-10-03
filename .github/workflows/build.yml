@@ -8,9 +8,13 @@ on:
 #      - main
   workflow_dispatch:
     inputs:
-      arm64_support:
-        description: 'arm64 is supported, but ijk decoder is not supported.'
+      rebuild:
+        description: 'rebuild'
         required: false
+        type: boolean
+      release:
+        description: 'release'
+        required: true
         type: boolean
 
 jobs:
@@ -47,8 +51,10 @@ jobs:
         working-directory: actions
         run: |
           commit=$(curl -sL ${{ matrix.repoUrl }}/commits/${{ matrix.branchName }} |grep -o '/commit/[a-z0-9]\+' |head -1 | cut -d\/ -f3)
-          # if ! git log --oneline |grep -q "$commit"; then
           if ! grep -q "$commit" ./log/${{ matrix.userName }}.txt; then
+            echo "commit=$commit" >> $GITHUB_ENV
+            echo "commit_id=${commit:0:7}" >> $GITHUB_ENV
+          elif [[ "${{ inputs.rebuild }}" == "true" ]] ; then
             echo "commit=$commit" >> $GITHUB_ENV
             echo "commit_id=${commit:0:7}" >> $GITHUB_ENV
           fi
@@ -64,7 +70,6 @@ jobs:
         run: |
           echo "tag=$(git log --date=format:'%Y.%m%d.%H%M' --pretty=format:%cd ${{ env.commit_id }} -1)" >> $GITHUB_ENV
           echo "update_time=$(git log --date=format:'%Y/%m/%d %H:%M' --pretty=format:%cd ${{ env.commit_id }} -1)" >> $GITHUB_ENV
-          # tar -cJf source-${{ env.commitS }}.tar.xz --exclude=.git --exclude=.github *
           zip -q -x ".git/*" -r ${{ matrix.userName }}_${{ env.commit_id }}_src.zip .
 
       - name: Arm64 Support Beta
@@ -148,7 +153,7 @@ jobs:
           done
 
       - name: Write Update Changelog
-        if: ${{ env.commit }}
+        if: ${{ env.commit && inputs.release }}
         run: |
           cd actions
           # myLastCommit=`git log --oneline |grep -o '[a-z0-9]\{40\}' |head -1`
@@ -162,12 +167,12 @@ jobs:
           else
             COMMIT_MESSAGE=$(git log --pretty=format:%B ${{ env.commit_id }}...${myLastCommit:0:7} |sed -e 's# \{2,\}#\n#g' -e '/^Merge pull/d' -e 's#"#\\"#g' -e '/^$/d' |cat -n |sort -k2,2 -k1,1n |uniq -f1 |sort -k1,1n |cut -f2- )
           fi
-          echo -e "Credit: [${{ matrix.userName }}](${{ matrix.repoUrl }})\n${COMMIT_MESSAGE}" > Changelog.txt
+          echo -e "Credit: [${{ matrix.userName }}](${{ matrix.repoUrl }})\n\`\`\`${COMMIT_MESSAGE}\`\`\`" > Changelog.txt
           echo "$COMMIT_MESSAGE" > desc.txt
 
       - name: Release App
         uses: softprops/action-gh-release@v2
-        if: ${{ env.commit }}
+        if: ${{ env.commit && inputs.release }}
         with:
           name: ${{ env.tag }}
           tag_name: ${{ env.tag }}_${{ matrix.userName }}
@@ -179,7 +184,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Commit And Push
-        if: ${{ env.commit }}
+        if: ${{ env.commit && inputs.release }}
         working-directory: actions
         continue-on-error: true
         run: |
@@ -194,5 +199,5 @@ jobs:
           git push origin main
 
       - name: Upload App To Lanzou
-        if: ${{ env.commit && env.ylogin }}
+        if: ${{ env.commit && env.ylogin && inputs.release }}
         run: python3 ${{ github.workspace }}/actions/.github/scripts/lanzou-api.py "${{ github.workspace }}/TVBoxOSC/apk/" "$lanzou_folder_id" "${{ github.workspace }}/TVBoxOSC/desc.txt"
